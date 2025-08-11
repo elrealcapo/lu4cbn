@@ -30,7 +30,7 @@ const DEFAULT_QSOS = [
 ];
 
 // 👉 Reemplazá por tu Sheet:
-const SHEET_ID = "PONER_TU_SHEET_ID";
+const SHEET_ID = "1cQjYZLIzG9mBbZe7QE4X9phB65ZdT4-LU5qQogVsrCc";
 const GID = "0"; // pestaña (gid) de tu hoja
 const SHEET_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&gid=${GID}`;
 
