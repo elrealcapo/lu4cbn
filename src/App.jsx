@@ -2,19 +2,17 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Radio, MapPin, Clock, Antenna, Activity, Mail, Globe2, Filter } from "lucide-react";
 import { motion } from "framer-motion";
 
-// --- Pequeños componentes UI ---
+// --- UI mini ---
 const Badge = ({ children }) => (
   <span className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/90 backdrop-blur">
     {children}
   </span>
 );
-
 const Card = ({ children, className = "" }) => (
   <div className={`rounded-2xl border border-white/10 bg-white/[0.03] p-5 shadow-lg shadow-black/20 ${className}`}>
     {children}
   </div>
 );
-
 const SectionTitle = ({ icon: Icon, title, subtitle }) => (
   <div className="mb-4 flex items-end justify-between gap-3">
     <div className="flex items-center gap-3">
@@ -25,13 +23,42 @@ const SectionTitle = ({ icon: Icon, title, subtitle }) => (
   </div>
 );
 
-// --- Log (solo lectura) ---
-const QSOS = [
-  { date: "2025-08-09", time: "23:11", call: "PY2XYZ", band: "20m", mode: "SSB", rstSent: "59", rstRcvd: "57", qth: "São Paulo", notes: "Apertura fuerte" },
-  { date: "2025-08-08", time: "01:42", call: "CE3ABC", band: "40m", mode: "FT8", rstSent: "-05", rstRcvd: "-08", qth: "Santiago", notes: "" },
-  { date: "2025-08-06", time: "18:29", call: "LU2CSG", band: "2m", mode: "FM", rstSent: "59", rstRcvd: "59", qth: "CABA", notes: "QSO local" },
-  { date: "2025-08-03", time: "20:05", call: "CX1AAA", band: "10m", mode: "SSB", rstSent: "59", rstRcvd: "59", qth: "Montevideo", notes: "Esporádica E" },
+// --- Fallback local (si Google falla) ---
+const DEFAULT_QSOS = [
+  { date: "2025-08-09", time: "23:11", call: "PY2XYZ", band: "20m", mode: "SSB", qth: "São Paulo", notes: "Apertura fuerte" },
+  { date: "2025-08-08", time: "01:42", call: "CE3ABC", band: "40m", mode: "FT8", qth: "Santiago", notes: "" },
 ];
+
+// 👉 Reemplazá por tu Sheet:
+const SHEET_ID = "PONER_TU_SHEET_ID";
+const GID = "0"; // pestaña (gid) de tu hoja
+const SHEET_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&gid=${GID}`;
+
+// Parseo del JSON “envuelto” de Google
+function parseGvizJson(text) {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end === -1) throw new Error("Formato inesperado");
+  return JSON.parse(text.slice(start, end + 1));
+}
+function mapRowsToQsos(obj) {
+  const cols = obj.table.cols.map(c => (c && c.label ? c.label.toLowerCase() : ""));
+  const get = (row, name) => {
+    const idx = cols.indexOf(name);
+    if (idx === -1) return "";
+    const cell = row.c[idx];
+    return cell ? (cell.v ?? "") : "";
+  };
+  return (obj.table.rows || []).map(r => ({
+    date: String(get(r, "date")),
+    time: String(get(r, "time")),
+    call: String(get(r, "call")),
+    band: String(get(r, "band")),
+    mode: String(get(r, "mode")),
+    qth: String(get(r, "qth")),
+    notes: String(get(r, "notes")),
+  })).filter(x => x.call);
+}
 
 export default function LU4CBN_Page() {
   // Estado QRV/QRT
@@ -54,19 +81,36 @@ export default function LU4CBN_Page() {
     website: "https://www.qrz.com/db/LU4CBN",
   };
 
-  // Filtro log
+  // QSOs (Google Sheets)
+  const [qsos, setQsos] = useState(DEFAULT_QSOS);
+  useEffect(() => {
+    if (!SHEET_ID) return;
+    fetch(`${SHEET_URL}&_ts=${Date.now()}`)
+      .then(r => r.text())
+      .then(txt => {
+        const obj = parseGvizJson(txt);
+        const list = mapRowsToQsos(obj);
+        if (list.length) setQsos(list);
+      })
+      .catch(() => {/* fallback silencioso */});
+  }, []);
+
+  // Filtro
   const [filter, setFilter] = useState("");
   const filteredQsos = useMemo(() => {
     const f = filter.toLowerCase();
-    return QSOS.filter((q) =>
-      [q.date, q.time, q.call, q.band, q.mode, q.qth, q.notes].some((v) => String(v).toLowerCase().includes(f))
+    return qsos.filter((q) =>
+      [q.date, q.time, q.call, q.band, q.mode, q.qth, q.notes]
+        .some(v => String(v ?? "").toLowerCase().includes(f))
     );
-  }, [filter]);
+  }, [qsos, filter]);
 
-  // Exportar CSV
+  // Export CSV (sin RST)
   function exportCSV() {
-    const headers = ["Fecha","Hora","Indicativo","Banda","Modo","RST_Enviado","RST_Recibido","QTH","Notas"];
-    const rows = QSOS.map(q=>[q.date,q.time,q.call,q.band,q.mode,q.rstSent,q.rstRcvd,q.qth,`"${(q.notes||"").replaceAll('"','""')}"`].join(","));
+    const headers = ["Fecha","Hora","Indicativo","Banda","Modo","QTH","Notas"];
+    const rows = qsos.map(q=>[
+      q.date, q.time, q.call, q.band, q.mode, q.qth, `"${String(q.notes||"").replaceAll('"','""')}"`
+    ].join(","));
     const csv = [headers.join(","), ...rows].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -75,14 +119,14 @@ export default function LU4CBN_Page() {
     URL.revokeObjectURL(url);
   }
 
-  // Reloj UTC + Último QSO (vida)
+  // Reloj UTC + Último QSO
   const [utc, setUtc] = useState(new Date());
   useEffect(() => { const t = setInterval(()=>setUtc(new Date()), 1000); return () => clearInterval(t); }, []);
   const utcHHMM = utc.toUTCString().slice(17,22);
   const lastQSO = useMemo(() => {
-    if (!QSOS.length) return null;
-    return [...QSOS].sort((a,b)=> (new Date(b.date+'T'+b.time)) - (new Date(a.date+'T'+a.time)))[0];
-  }, []);
+    if (!qsos.length) return null;
+    return [...qsos].sort((a,b)=> (new Date(b.date+'T'+b.time)) - (new Date(a.date+'T'+a.time)))[0];
+  }, [qsos]);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-100">
@@ -195,7 +239,7 @@ export default function LU4CBN_Page() {
               <table className="w-full text-left text-sm">
                 <thead className="text-xs text-white/60">
                   <tr className="border-b border-white/10">
-                    {["Fecha","Hora","Indicativo","Banda","Modo","Enviado","Recibido","QTH","Notas"].map(h=> (
+                    {["Fecha","Hora","Indicativo","Banda","Modo","QTH","Notas"].map(h=> (
                       <th key={h} className="px-2 py-2 font-medium">{h}</th>
                     ))}
                   </tr>
@@ -208,8 +252,6 @@ export default function LU4CBN_Page() {
                       <td className="px-2 py-2 font-semibold">{q.call}</td>
                       <td className="px-2 py-2">{q.band}</td>
                       <td className="px-2 py-2">{q.mode}</td>
-                      <td className="px-2 py-2">{q.rstSent}</td>
-                      <td className="px-2 py-2">{q.rstRcvd}</td>
                       <td className="px-2 py-2">{q.qth}</td>
                       <td className="px-2 py-2 text-white/80">{q.notes}</td>
                     </tr>
@@ -244,9 +286,9 @@ export default function LU4CBN_Page() {
             </ul>
           </Card>
 
-          {/* Contacto & QSL (restaurado) */}
+          {/* Contacto & QSL */}
           <Card className="mt-6">
-            <SectionTitle icon={Mail} title="Contacto & QSL" subtitle="¡Me encanta recibir QSLs!" />
+            <SectionTitle icon={Mail} title="Contacto & QSL" subtitle="Recibo QSLs" />
             <div className="space-y-3 text-sm">
               <p>Email: <a href={`mailto:${profile.email}`} className="text-emerald-300 hover:underline">{profile.email}</a></p>
               <p>Sitio: <a href={profile.website} target="_blank" rel="noreferrer" className="text-emerald-300 hover:underline">{profile.website}</a></p>
